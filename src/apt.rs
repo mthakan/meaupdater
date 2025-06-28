@@ -4,7 +4,7 @@ use crate::model::{PackageUpdate, UpdateType};
 use anyhow::{Context, Result};
 use std::process::Command;
 
-/// Function that parses apt list output (testable).
+    /// Function that parses apt list output (testable).
 pub fn parse_apt_list_output(s: &str) -> Vec<PackageUpdate> {
     let mut packages = Vec::new();
 
@@ -64,7 +64,7 @@ pub fn get_upgradable_packages() -> Result<Vec<PackageUpdate>> {
         .args(&["list", "--upgradable"])
         .env("LANG", "C")
         .output()
-        .context("`apt list --upgradable` failed to run")?;
+        .context("Could not run `apt list --upgradable`")?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(parse_apt_list_output(&stdout))
