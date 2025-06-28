@@ -4,7 +4,7 @@ use crate::model::{PackageUpdate, UpdateType};
 use anyhow::{Context, Result};
 use std::process::Command;
 
-    /// Function that parses apt list output (testable).
+/// Function that parses apt list output (testable).
 pub fn parse_apt_list_output(s: &str) -> Vec<PackageUpdate> {
     let mut packages = Vec::new();
 
