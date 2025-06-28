@@ -18,7 +18,7 @@ pub fn install_packages(pkgs: &[String]) -> Result<()> {
         .arg("-c")
         .arg(&cmd)
         .status()
-        .context("`pkexec` başlatılamadı")?;
+        .context("`pkexec` failed to start")?;
     if !status.success() {
         bail!("`apt install` error code {}", status);
     }
