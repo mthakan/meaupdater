@@ -1,9 +1,9 @@
 // src/model.rs
+
 #[derive(Debug, PartialEq)]
 pub enum UpdateType {
     Security,
     Software,
-    Unknown,
 }
 
 #[derive(Debug, PartialEq)]
