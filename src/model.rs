@@ -1,12 +1,12 @@
 // src/model.rs
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum UpdateType {
     Security,
     Software,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct PackageUpdate {
     pub name: String,
     pub current_version: String,
