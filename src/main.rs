@@ -1,6 +1,7 @@
 mod apt;
 mod model;
 mod policy;
+mod progress;
 
 use anyhow::Error;
 use gtk::prelude::*;
@@ -14,7 +15,6 @@ use gtk::{
     ListBoxRow,
     MessageDialog,
     Orientation,
-    ProgressBar,
     ScrolledWindow,
     ButtonsType,
     MessageType,
@@ -24,7 +24,7 @@ use gtk::{
     CssProvider,
     gdk::Display,
 };
-use std::process::Command;
+use progress::ProgressWindow;
 
 fn load_css() {
     let provider = CssProvider::new();
@@ -213,7 +213,7 @@ fn build_ui(app: &Application) {
     let window1 = window.clone();
     let window2 = window.clone();
 
-    
+    // Select_all
     let select_all_list = listbox.clone();
     select_all_btn.connect_clicked(move |_| {
         let mut child = select_all_list.first_child();
@@ -259,7 +259,7 @@ fn build_ui(app: &Application) {
         }
     });
 
-    
+    // Refresh
     let listbox_clone = listbox.clone();
     let refresh_clone = refresh_btn.clone();
     let refresh_window = window1.clone();
@@ -359,7 +359,7 @@ fn build_ui(app: &Application) {
         }
     });
 
-    // Install proccess
+    // Install proccess - Updated with new progress window
     let install_window = window2;
     let listbox_for_install = listbox.clone();
     let refresh_clone2 = refresh_clone;
@@ -377,20 +377,19 @@ fn build_ui(app: &Application) {
                 let mut package_name = String::new();
                 
                 let mut widget_child = hbox.first_child();
-                let mut is_third_widget = false; // To follow the 3rd Widget
                 let mut widget_count = 0;
                 
                 while let Some(widget) = widget_child {
                     widget_child = widget.next_sibling();
                     widget_count += 1;
                     
-                    // Find CheckButton 
+                    // Find CheckButton
                     if let Ok(check) = widget.clone().downcast::<CheckButton>() {
                         checkbox_found = check.is_active();
                     }
                     
                     // Find package name 
-                    if widget_count == 3 { // 3. widget
+                    if widget_count == 3 {
                         if let Ok(label) = widget.clone().downcast::<Label>() {
                             package_name = label.text().to_string();
                         }
@@ -416,43 +415,31 @@ fn build_ui(app: &Application) {
             return;
         }
 
-        let progress = ProgressBar::new();
-        progress.set_show_text(true);
-        let pg_dialog = MessageDialog::builder()
-            .transient_for(&install_window)
-            .modal(true)
-            .message_type(MessageType::Other)
-            .buttons(ButtonsType::None)
-            .text("⬇️ Installing updates…")
-            .build();
-        pg_dialog.content_area().append(&progress);
-        pg_dialog.show();
-
-        if let Err(err) = policy::install_packages(&selected) {
+        // Create and display new progress window
+        let progress_window = ProgressWindow::new(&install_window);
+        progress_window.show();
+        
+        // Install packages with progress window
+        if let Err(err) = progress_window.install_packages_with_progress(&selected) {
             let dialog = MessageDialog::builder()
                 .transient_for(&install_window)
                 .modal(true)
                 .message_type(MessageType::Error)
                 .buttons(ButtonsType::Ok)
-                .text(&format!("❌ Installation error:\n{}", err))
+                .text(&format!("❌ Installation initialization error:\n{}", err))
                 .build();
             dialog.connect_response(|dlg, _| dlg.close());
             dialog.show();
         } else {
-            progress.set_fraction(1.0);
-            progress.set_text(Some("✅ Completed"));
-            let dialog = MessageDialog::builder()
-                .transient_for(&install_window)
-                .modal(true)
-                .message_type(MessageType::Info)
-                .buttons(ButtonsType::Ok)
-                .text("✅ Updates installed successfully.")
-                .build();
-            dialog.connect_response(|dlg, _| dlg.close());
-            dialog.show();
-            refresh_clone2.emit_clicked();
+            // Installation started successfully, list refresh will be done in the background
+            glib::timeout_add_seconds_local(3, {
+                let refresh_btn = refresh_clone2.clone();
+                move || {
+                    refresh_btn.emit_clicked();
+                    glib::ControlFlow::Break
+                }
+            });
         }
-        pg_dialog.close();
     });
 }
 
