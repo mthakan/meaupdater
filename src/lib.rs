@@ -3,3 +3,4 @@
 pub mod apt;
 pub mod model;
 pub mod policy;
+pub mod progress;
