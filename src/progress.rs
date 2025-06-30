@@ -8,10 +8,12 @@ use std::process::{Command, Stdio};
 use std::io::{BufRead, BufReader};
 use std::thread;
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::fs;
 
 use anyhow::Error;
 
+#[derive(Clone)]
 pub struct ProgressWindow {
     window: Window,
     progress_bar: ProgressBar,
@@ -19,6 +21,10 @@ pub struct ProgressWindow {
     log_buffer: TextBuffer,
     status_label: Label,
 }
+
+// Store the last apt update time as a global variable
+static LAST_APT_UPDATE: Mutex<Option<u64>> = Mutex::new(None);
+const APT_UPDATE_CACHE_DURATION: u64 = 300; // 5 minutes (in seconds)
 
 impl ProgressWindow {
     pub fn new(parent: &ApplicationWindow) -> Self {
@@ -42,9 +48,9 @@ impl ProgressWindow {
         main_vbox.set_margin_end(16);
 
         // Status label
-        let status_label = Label::new(Some("Getting ready..."));
+        let status_label = Label::new(Some("Hazırlanıyor..."));
         status_label.set_halign(gtk::Align::Start);
-        status_label.set_markup("<b>Getting ready...</b>");
+        status_label.set_markup("<b>Hazırlanıyor...</b>");
         main_vbox.append(&status_label);
 
         // Progress bar
@@ -99,18 +105,94 @@ impl ProgressWindow {
         let mut end_iter = self.log_buffer.end_iter();
         self.log_buffer.insert(&mut end_iter, &format!("{}\n", text));
         
-        // Auto scroll - Scroll to the bottom in TextView
+        // Auto scroll
         let mark = self.log_buffer.create_mark(None, &end_iter, false);
         self.log_view.scroll_mark_onscreen(&mark);
     }
 
-    pub fn install_packages_with_progress(&self, packages: &[String]) -> Result<(), Error> {
-        let (tx, rx) = mpsc::channel::<ProgressMessage>();
+    // Check if apt update is required
+    fn needs_apt_update() -> bool {
+        // First, check the existence of the apt cache file.
+        if !std::path::Path::new("/var/lib/apt/lists").exists() {
+            return true;
+        }
 
-        // Clone packages
-        let packages_clone = packages.to_vec();
+        // Check last apt update time
+        if let Ok(last_update_guard) = LAST_APT_UPDATE.lock() {
+            if let Some(last_update) = *last_update_guard {
+                let current_time = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                
+                return current_time - last_update > APT_UPDATE_CACHE_DURATION;
+            }
+        }
         
-        // clone UI elements
+        true
+    }
+
+    // Update apt update time
+    fn update_apt_update_time() {
+        if let Ok(mut last_update_guard) = LAST_APT_UPDATE.lock() {
+            let current_time = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            *last_update_guard = Some(current_time);
+        }
+    }
+
+    // Perform the apt update process (if necessary)
+    fn run_apt_update_if_needed(tx: &mpsc::Sender<ProgressMessage>) -> Result<(), String> {
+        if !Self::needs_apt_update() {
+            let _ = tx.send(ProgressMessage::Log("Apt cache is up to date, skipping apt update...".to_string()));
+            return Ok(());
+        }
+
+        let _ = tx.send(ProgressMessage::Log("Running the apt update command...".to_string()));
+
+        match Command::new("pkexec")
+            .args(&["apt", "update"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(mut child) => {
+                if let Some(stdout) = child.stdout.take() {
+                    let reader = BufReader::new(stdout);
+                    for line in reader.lines() {
+                        if let Ok(line) = line {
+                            let _ = tx.send(ProgressMessage::Log(line));
+                        }
+                    }
+                }
+                match child.wait() {
+                    Ok(status) => {
+                        if !status.success() {
+                            return Err("apt update failed.".to_string());
+                        }
+                        // Update time after successful apt update
+                        Self::update_apt_update_time();
+                        let _ = tx.send(ProgressMessage::Log("apt update completed successfully.".to_string()));
+                        Ok(())
+                    }
+                    Err(e) => {
+                        Err(format!("apt update error: {}", e))
+                    }
+                }
+            }
+            Err(e) => {
+                Err(format!("apt update initialization error: {}", e))
+            }
+        }
+    }
+
+    pub async fn check_updates_with_progress(&self) -> Result<Vec<crate::model::PackageUpdate>, Error> {
+        let (tx, rx) = mpsc::channel::<ProgressMessage>();
+        let (result_tx, result_rx) = mpsc::channel::<Result<Vec<crate::model::PackageUpdate>, Error>>();
+
+        // Clone UI elements
         let progress_bar = self.progress_bar.clone();
         let status_label = self.status_label.clone();
         let log_buffer = self.log_buffer.clone();
@@ -123,44 +205,237 @@ impl ProgressWindow {
 
         // Start background thread
         thread::spawn(move || {
-            let _ = tx.send(ProgressMessage::Status("Updating package list...".to_string()));
+            let _ = tx.send(ProgressMessage::Status("Checking the package list...".to_string()));
             let _ = tx.send(ProgressMessage::Progress(0.1, "10%".to_string()));
-            let _ = tx.send(ProgressMessage::Log("Running the apt update command...".to_string()));
 
-            // apt update
-            match Command::new("pkexec")
-                .args(&["apt", "update"])
+            // Apt update - only if necessary
+            if let Err(e) = Self::run_apt_update_if_needed(&tx) {
+                let _ = tx.send(ProgressMessage::Error(e));
+                let _ = result_tx.send(Err(anyhow::anyhow!("apt update error")));
+                return;
+            }
+
+            let _ = tx.send(ProgressMessage::Status("Checking for updatable packages...".to_string()));
+            let _ = tx.send(ProgressMessage::Progress(0.6, "60%".to_string()));
+            let _ = tx.send(ProgressMessage::Log("Running apt list --upgradable command...".to_string()));
+
+            // Get upgradable packages
+            match Command::new("apt")
+                .args(&["list", "--upgradable"])
+                .env("LANG", "C")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
             {
                 Ok(mut child) => {
+                    let mut output_text = String::new();
                     if let Some(stdout) = child.stdout.take() {
                         let reader = BufReader::new(stdout);
                         for line in reader.lines() {
                             if let Ok(line) = line {
-                                let _ = tx.send(ProgressMessage::Log(line));
+                                let _ = tx.send(ProgressMessage::Log(line.clone()));
+                                output_text.push_str(&line);
+                                output_text.push('\n');
                             }
                         }
                     }
-                    let _ = child.wait();
+
+                    match child.wait() {
+                        Ok(status) => {
+                            if status.success() {
+                                let _ = tx.send(ProgressMessage::Progress(0.9, "90%".to_string()));
+                                let _ = tx.send(ProgressMessage::Status("Processing package list...".to_string()));
+                                
+                                let packages = crate::apt::parse_apt_list_output(&output_text);
+                                let package_count = packages.len();
+                                
+                                let _ = tx.send(ProgressMessage::Progress(1.0, "100%".to_string()));
+                                if package_count == 0 {
+                                    let _ = tx.send(ProgressMessage::Status("✅ All packages are up to date!".to_string()));
+                                    let _ = tx.send(ProgressMessage::Log("No packages found that do not require updates.".to_string()));
+                                } else {
+                                    let _ = tx.send(ProgressMessage::Status(format!("✅ {} update found!", package_count)));
+                                    let _ = tx.send(ProgressMessage::Log(format!("{} updateable package found.", package_count)));
+                                }
+                                let _ = tx.send(ProgressMessage::CheckComplete);
+                                let _ = result_tx.send(Ok(packages));
+                            } else {
+                                let _ = tx.send(ProgressMessage::Error("The package list could not be retrieved.".to_string()));
+                                let _ = result_tx.send(Err(anyhow::anyhow!("The apt list command failed.")));
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(ProgressMessage::Error(format!("Command error: {}", e)));
+                            let _ = result_tx.send(Err(anyhow::anyhow!("Command error: {}", e)));
+                        }
+                    }
                 }
                 Err(e) => {
-                    let _ = tx.send(ProgressMessage::Error(format!("apt update error: {}", e)));
-                    return;
+                    let _ = tx.send(ProgressMessage::Error(format!("apt list startup error: {}", e)));
+                    let _ = result_tx.send(Err(anyhow::anyhow!("apt list startup error: {}", e)));
                 }
+            }
+        });
+
+        // Variable that holds the result
+        let result_packages = Arc::new(Mutex::new(Vec::new()));
+        let result_error = Arc::new(Mutex::new(None::<Error>));
+        let is_complete = Arc::new(Mutex::new(false));
+
+        let result_packages_clone = result_packages.clone();
+        let result_error_clone = result_error.clone();
+        let is_complete_clone = is_complete.clone();
+
+        // Check messages periodically
+        glib::timeout_add_local(Duration::from_millis(100), move || {
+            let mut messages_to_process = Vec::new();
+            
+            // Get all current messages
+            if let Ok(rx_guard) = rx_clone.try_lock() {
+                while let Ok(msg) = rx_guard.try_recv() {
+                    messages_to_process.push(msg);
+                }
+            }
+
+            // Check the result
+            if let Ok(res) = result_rx.try_recv() {
+                match res {
+                    Ok(packages) => {
+                        if let Ok(mut packages_guard) = result_packages_clone.try_lock() {
+                            *packages_guard = packages;
+                        }
+                    }
+                    Err(error) => {
+                        if let Ok(mut error_guard) = result_error_clone.try_lock() {
+                            *error_guard = Some(error);
+                        }
+                    }
+                }
+                if let Ok(mut complete_guard) = is_complete_clone.try_lock() {
+                    *complete_guard = true;
+                }
+            }
+
+            // Process the messages
+            for msg in messages_to_process {
+                match msg {
+                    ProgressMessage::Status(status) => {
+                        status_label.set_markup(&format!("<b>{}</b>", status));
+                    }
+                    ProgressMessage::Progress(fraction, text) => {
+                        progress_bar.set_fraction(fraction);
+                        progress_bar.set_text(Some(&text));
+                    }
+                    ProgressMessage::Log(log) => {
+                        let mut end_iter = log_buffer.end_iter();
+                        log_buffer.insert(&mut end_iter, &format!("{}\n", log));
+                        
+                        // Auto scroll
+                        let mark = log_buffer.create_mark(None, &end_iter, false);
+                        log_view.scroll_mark_onscreen(&mark);
+                    }
+                    ProgressMessage::Error(error) => {
+                        status_label.set_markup(&format!("<b><span color='red'>❌ Error: {}</span></b>", error));
+                        
+                        // Show error dialog
+                        let dialog = MessageDialog::builder()
+                            .transient_for(&window)
+                            .modal(true)
+                            .message_type(MessageType::Error)
+                            .buttons(ButtonsType::Ok)
+                            .text(&format!("❌ Update Check Error:\n{}", error))
+                            .build();
+                        dialog.connect_response(|dlg, _| dlg.close());
+                        dialog.show();
+                        
+                        return glib::ControlFlow::Break;
+                    }
+                    ProgressMessage::CheckComplete => {
+                        // Close the window in 2 seconds
+                        glib::timeout_add_seconds_local(2, {
+                            let window = window.clone();
+                            move || {
+                                window.close();
+                                glib::ControlFlow::Break
+                            }
+                        });
+                        
+                        return glib::ControlFlow::Break;
+                    }
+                    _ => {} 
+                }
+            }
+            
+            glib::ControlFlow::Continue
+        });
+
+        
+        loop {
+            glib::MainContext::default().iteration(false);
+            thread::sleep(Duration::from_millis(50));
+            
+            if let Ok(complete_guard) = is_complete.try_lock() {
+                if *complete_guard {
+                    // Check if there is an error
+                    if let Ok(error_guard) = result_error.try_lock() {
+                        if let Some(error) = error_guard.as_ref() {
+                            return Err(anyhow::anyhow!("{}", error));
+                        }
+                    }
+                    
+                    // Return the result
+                    if let Ok(packages_guard) = result_packages.try_lock() {
+                        return Ok(packages_guard.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    pub async fn install_packages_with_progress(&self, packages: &[String]) -> Result<(), Error> {
+        let (tx, rx) = mpsc::channel::<ProgressMessage>();
+
+        // Clone the packages
+        let packages_clone = packages.to_vec();
+        
+        // Clone the UI elements
+        let progress_bar = self.progress_bar.clone();
+        let status_label = self.status_label.clone();
+        let log_buffer = self.log_buffer.clone();
+        let log_view = self.log_view.clone();
+        let window = self.window.clone();
+
+        // Let's wrap the Receiver with Arc<Mutex<>.
+        let rx = Arc::new(Mutex::new(rx));
+        let rx_clone = rx.clone();
+
+        // Outcome control variables
+        let is_complete = Arc::new(Mutex::new(false));
+        let has_error = Arc::new(Mutex::new(false));
+        let is_complete_clone = is_complete.clone();
+        let has_error_clone = has_error.clone();
+
+        // Start the background thread
+        thread::spawn(move || {
+            let _ = tx.send(ProgressMessage::Status("Checking the package list...".to_string()));
+            let _ = tx.send(ProgressMessage::Progress(0.1, "10%".to_string()));
+
+            // Apt update - only if necessary
+            if let Err(e) = Self::run_apt_update_if_needed(&tx) {
+                let _ = tx.send(ProgressMessage::Error(e));
+                return;
             }
 
             let _ = tx.send(ProgressMessage::Status("Installing packages...".to_string()));
             let _ = tx.send(ProgressMessage::Progress(0.3, "30%".to_string()));
 
-            // Install packages
+            // Install the packages
             let mut args = vec!["apt", "install", "-y"];
             for pkg in &packages_clone {
                 args.push(pkg);
             }
 
-            let _ = tx.send(ProgressMessage::Log(format!("command: pkexec {}", args.join(" "))));
+            let _ = tx.send(ProgressMessage::Log(format!("Command: pkexec {}", args.join(" "))));
 
             match Command::new("pkexec")
                 .args(&args)
@@ -178,7 +453,7 @@ impl ProgressWindow {
                             if let Ok(line) = line {
                                 let _ = tx.send(ProgressMessage::Log(line.clone()));
                                 
-                                // Progress estimation
+                                // Progress forecast
                                 if line.contains("Setting up") || line.contains("Processing") {
                                     installed_count += 1.0;
                                     let progress = 0.3 + (installed_count / total_packages) * 0.6;
@@ -215,7 +490,7 @@ impl ProgressWindow {
         glib::timeout_add_local(Duration::from_millis(100), move || {
             let mut messages_to_process = Vec::new();
             
-            // Get all available messages
+            // Get all current messages
             if let Ok(rx_guard) = rx_clone.try_lock() {
                 while let Ok(msg) = rx_guard.try_recv() {
                     messages_to_process.push(msg);
@@ -254,6 +529,13 @@ impl ProgressWindow {
                         dialog.connect_response(|dlg, _| dlg.close());
                         dialog.show();
                         
+                        if let Ok(mut error_guard) = has_error_clone.try_lock() {
+                            *error_guard = true;
+                        }
+                        if let Ok(mut complete_guard) = is_complete_clone.try_lock() {
+                            *complete_guard = true;
+                        }
+                        
                         return glib::ControlFlow::Break;
                     }
                     ProgressMessage::Success => {
@@ -273,7 +555,14 @@ impl ProgressWindow {
                         });
                         dialog.show();
                         
+                        if let Ok(mut complete_guard) = is_complete_clone.try_lock() {
+                            *complete_guard = true;
+                        }
+                        
                         return glib::ControlFlow::Break;
+                    }
+                    ProgressMessage::CheckComplete => {
+                        // This message is not used during installation, only for checking. But we add it for pattern matching
                     }
                 }
             }
@@ -281,7 +570,22 @@ impl ProgressWindow {
             glib::ControlFlow::Continue
         });
 
-        Ok(())
+        // Wait for the result
+        loop {
+            glib::MainContext::default().iteration(false);
+            thread::sleep(Duration::from_millis(50));
+            
+            if let Ok(complete_guard) = is_complete.try_lock() {
+                if *complete_guard {
+                    if let Ok(error_guard) = has_error.try_lock() {
+                        if *error_guard {
+                            return Err(anyhow::anyhow!("An error occurred during installation"));
+                        }
+                    }
+                    return Ok(());
+                }
+            }
+        }
     }
 }
 
@@ -292,4 +596,5 @@ enum ProgressMessage {
     Log(String),
     Error(String),
     Success,
+    CheckComplete,
 }
