@@ -3,16 +3,17 @@ A simple update manager written in Rust with GTK4 for Debian.
 
 ---
 
-![screenshot](https://github.com/user-attachments/assets/e0cbfb52-e8be-4321-b5c0-2289647bad05)
+![screenshot](https://github.com/user-attachments/assets/8ba432a0-da05-430b-9f72-738b967ca8e1)
 
 ---
 
 ## Features
 
-- Check for system updates
+- Check for updates (including security)
 - Download and install updates
+- Manage APT repositories with the built-in Repository Manager
 - Clean and user-friendly GTK4 interface
-- Built with Rust for speed and reliability
+- Built with Rust for performance and reliability
 
 ---
 
