@@ -12,4 +12,5 @@ pub struct PackageUpdate {
     pub current_version: String,
     pub new_version: String,
     pub update_type: UpdateType,
+    pub size: String, // Paket boyutu
 }
