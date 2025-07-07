@@ -3,7 +3,7 @@ A simple update manager written in Rust with GTK4 for Debian-based systems.
 
 ---
 
-![screenshot](https://github.com/user-attachments/assets/8ba432a0-da05-430b-9f72-738b967ca8e1)
+![image](https://github.com/user-attachments/assets/1a530c99-6be8-4404-87c6-88406be9d561)
 
 ---
 
