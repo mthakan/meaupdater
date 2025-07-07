@@ -451,7 +451,7 @@ fn build_ui(app: &Application) {
     let window = ApplicationWindow::builder()
         .application(app)
         .title("MeaUpdater")
-        .default_width(850)
+        .default_width(950)
         .default_height(625)
         .build();
 
@@ -561,20 +561,20 @@ fn build_ui(app: &Application) {
     header_row.set_margin_end(16);
     header_row.set_margin_bottom(8);
     
-    let type_header = Label::new(Some("Type"));
+    let type_header = Label::new(Some(" Type"));
     type_header.set_width_chars(6);
     type_header.set_halign(gtk::Align::Center);
-    type_header.set_markup("<b>Type</b>");
+    type_header.set_markup("<b> Type</b>");
     
-    let select_header = Label::new(Some("Select"));
+    let select_header = Label::new(Some("  Select"));
     select_header.set_width_chars(6);
     select_header.set_halign(gtk::Align::Center);
-    select_header.set_markup("<b>Select</b>");
+    select_header.set_markup("<b>  Select</b>");
     
-    let name_header = Label::new(Some("Package Name"));
+    let name_header = Label::new(Some("   Package Name"));
     name_header.set_hexpand(true);
     name_header.set_halign(gtk::Align::Start);
-    name_header.set_markup("<b>Package Name</b>");
+    name_header.set_markup("<b>   Package Name</b>");
     
     let version_header = Label::new(Some("Version"));
     version_header.set_width_chars(25);
