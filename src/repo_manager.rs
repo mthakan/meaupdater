@@ -46,7 +46,7 @@ impl Repository {
         let distribution = parts[2].to_string();
         let components = parts[3..].join(" ");
         
-        // Remove the repository name from the URI.
+        
         let name = uri.split('/').last()
             .unwrap_or(&uri)
             .replace("http://", "")
