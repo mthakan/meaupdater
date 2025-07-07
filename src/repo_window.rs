@@ -58,7 +58,7 @@ impl RepoWindow {
 
         main_vbox.append(&button_panel);
 
-        
+        // Separator
         let separator = Separator::new(Orientation::Horizontal);
         main_vbox.append(&separator);
 
@@ -84,10 +84,10 @@ impl RepoWindow {
         uri_header.set_halign(gtk::Align::Start);
         uri_header.set_markup("<b>URI</b>");
 
-        let dist_header = Label::new(Some("Distribution"));
+        let dist_header = Label::new(Some("Distro"));
         dist_header.set_width_chars(15);
         dist_header.set_halign(gtk::Align::Center);
-        dist_header.set_markup("<b>Distribution</b>");
+        dist_header.set_markup("<b>Distro</b>");
 
         let comp_header = Label::new(Some("Components"));
         comp_header.set_width_chars(20);
@@ -268,11 +268,11 @@ impl RepoWindow {
             actions_box.set_halign(gtk::Align::Center);
 
             let edit_btn = Button::from_icon_name("document-edit-symbolic");
-            edit_btn.set_tooltip_text(Some("Düzenle"));
+            edit_btn.set_tooltip_text(Some("Edit"));
             edit_btn.add_css_class("flat");
 
             let delete_btn = Button::from_icon_name("user-trash-symbolic");
-            delete_btn.set_tooltip_text(Some("Sil"));
+            delete_btn.set_tooltip_text(Some("Delete"));
             delete_btn.add_css_class("flat");
             delete_btn.add_css_class("destructive-action");
 
