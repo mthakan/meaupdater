@@ -1,5 +1,5 @@
 # meaupdater
-A simple update manager written in Rust with GTK4 for Debian.
+A simple update manager written in Rust with GTK4 for Debian-based systems.
 
 ---
 
