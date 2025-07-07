@@ -23,7 +23,73 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-/// Gets size information of all packets at once
+
+fn determine_update_type(package_name: &str, repository: &str) -> UpdateType {
+    
+    if is_kernel_package(package_name) {
+        return UpdateType::Kernel;
+    }
+    
+    
+    if repository.contains("/security") || 
+       repository.contains("-security") ||
+       repository.contains("security.") {
+        return UpdateType::Security;
+    }
+    
+    
+    let security_packages = [
+        "openssl", "ssl", "gnutls", "ssh", "openssh", "curl", "wget",
+        "firefox", "chromium", "thunderbird", "libreoffice",
+        "apache", "nginx", "php", "mysql", "postgresql",
+        "bind9", "dnsutils", "iptables", "ufw", "fail2ban",
+        "systemd", "sudo", "polkit", "pam", "login", "passwd",
+        "gpg", "gnupg", "ca-certificates", "certbot",
+        "kernel", "linux-", "firmware", "microcode",
+        "libc", "glibc", "zlib", "expat", "libxml", "libpng",
+        "jpeg", "tiff", "git", "subversion", "rsync"
+    ];
+    
+    let package_lower = package_name.to_lowercase();
+    for security_pkg in &security_packages {
+        if package_lower.contains(security_pkg) {
+            return UpdateType::Security;
+        }
+    }
+    
+    
+    UpdateType::Software
+}
+
+
+fn is_kernel_package(package_name: &str) -> bool {
+    let kernel_keywords = [
+        "linux-image",
+        "linux-headers", 
+        "linux-modules",
+        "linux-firmware",
+        "linux-generic",
+        "linux-lowlatency", 
+        "linux-oem",
+        "linux-hwe",
+        "linux-virtual",
+        "linux-tools",
+        "linux-cloud-tools",
+        "linux-signed",
+        "linux-restricted-modules"
+    ];
+    
+    let package_lower = package_name.to_lowercase();
+    for keyword in &kernel_keywords {
+        if package_lower.starts_with(keyword) {
+            return true;
+        }
+    }
+    
+    false
+}
+
+
 pub fn get_package_sizes(package_names: &[String]) -> HashMap<String, String> {
     let mut sizes = HashMap::new();
     
@@ -55,7 +121,7 @@ pub fn get_package_sizes(package_names: &[String]) -> HashMap<String, String> {
                         sizes.insert(current_package.clone(), format_size(size_bytes));
                     }
                 }
-                // Reset package information
+                
                 current_package.clear();
             }
         }
@@ -104,7 +170,7 @@ pub fn get_package_sizes(package_names: &[String]) -> HashMap<String, String> {
         }
     }
     
-    // Default value for packages whose size cannot be found
+    // Default value for packages whose size is not found
     for pkg_name in package_names {
         if !sizes.contains_key(pkg_name) {
             sizes.insert(pkg_name.clone(), "N/A".to_string());
@@ -114,14 +180,14 @@ pub fn get_package_sizes(package_names: &[String]) -> HashMap<String, String> {
     sizes
 }
 
-/// Function that parses apt list output
+/// Function that parses the apt list output
 pub fn parse_apt_list_output(s: &str) -> Vec<PackageUpdate> {
     let mut packages = Vec::new();
     let mut package_names = Vec::new();
 
     // First collect all package information
     for (i, line) in s.lines().enumerate() {
-        // First line "Listing..." and skip blank lines
+        // First line "Listing..." and skip empty lines
         if i == 0 || line.trim().is_empty() {
             continue;
         }
@@ -141,8 +207,8 @@ pub fn parse_apt_list_output(s: &str) -> Vec<PackageUpdate> {
 
         let new_version = parts[1].to_string();
 
-        // From parts like "[upgradable", "from:", "5.1-2]"
-        // Next track after "from:" current_version
+        
+        
         let current_version = if let Some(idx) = parts.iter().position(|p| *p == "from:") {
             parts.get(idx + 1)
                 .map(|p| p.trim_end_matches(']').to_string())
@@ -151,29 +217,25 @@ pub fn parse_apt_list_output(s: &str) -> Vec<PackageUpdate> {
             String::new()
         };
 
-        // Allocate security update by checking repository name ("pkg/repo" in parts[0])
+        
         let repo = parts[0];
-        let update_type = if repo.contains("/security") {
-            UpdateType::Security
-        } else {
-            UpdateType::Software
-        };
+        let update_type = determine_update_type(&name, repo);
 
         packages.push(PackageUpdate {
             name: name.clone(),
             current_version,
             new_version,
             update_type,
-            size: String::new(), // Size information will be filled in later
+            size: String::new(), 
         });
         
         package_names.push(name);
     }
 
-    // Get size information of all packages at once
+    
     let sizes = get_package_sizes(&package_names);
     
-    // Add size information to packages
+    
     for pkg in &mut packages {
         if let Some(size) = sizes.get(&pkg.name) {
             pkg.size = size.clone();
@@ -185,7 +247,7 @@ pub fn parse_apt_list_output(s: &str) -> Vec<PackageUpdate> {
     packages
 }
 
-/// Gets upgradeable packages on the system.
+
 pub fn get_upgradable_packages() -> Result<Vec<PackageUpdate>> {
     let output = Command::new("apt")
         .args(&["list", "--upgradable"])
