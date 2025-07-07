@@ -4,6 +4,7 @@
 pub enum UpdateType {
     Security,
     Software,
+    Kernel,
 }
 
 #[derive(Debug, PartialEq, Clone)]
