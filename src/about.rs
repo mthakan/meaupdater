@@ -75,8 +75,8 @@ impl AboutWindow {
         main_vbox.append(&title_label);
 
         // Version
-        let version_label = Label::new(Some("Version 0.6"));
-        version_label.set_markup("<span size='medium'>Version 0.6</span>");
+        let version_label = Label::new(Some("Version 0.5"));
+        version_label.set_markup("<span size='medium'>Version 0.5</span>");
         version_label.set_halign(gtk::Align::Center);
         version_label.set_margin_bottom(8);
         main_vbox.append(&version_label);
