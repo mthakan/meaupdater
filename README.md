@@ -11,6 +11,7 @@ A simple update manager written in Rust with GTK4 for Debian-based systems.
 
 - Check for updates and group them by type: software, security, kernel
 - Download and install updates
+- Send notifications based on update status
 - Manage APT repositories with the built-in Repository Manager
 - Kernel Manager: view, install, remove, and set default kernels
 - Driver Manager: detect, install, and manage hardware drivers
